@@ -1,0 +1,65 @@
+CREATE EXTENSION postgis;
+CREATE EXTENSION postgis_topology;
+
+--CREACION DE ESQUEMA DE TOPOLOGÍA PARA LA CAPA loca
+
+SELECT CreateTopology('loca_topo', find_srid('public', 'loca', 'geom'));
+
+--AÑADE COLUMNA DE TOPOLOGÍA A LA TABLA france_dept
+
+SELECT AddTopoGeometryColumn('loca_topo', 'public', 'loca', 'topogeom', 'MULTYPOLYGON');
+UPDATE loca SET topogeom = toTopoGeom(geom, 'loca_topo',1);
+
+SELECT locnombre, topogeom FROM loca;
+
+
+--VISUALIZACION DE LAS CAPAS IMPLICADAS CON REGLAS DE TOPOLOGÍA
+
+SELECT * FROM layer;
+SELECT * FROM topology;
+
+--VISUALIZACION NUMERO DE CARAS, NODOS Y ARCOS
+
+SELECT 'edge' AS name, count(*)
+  FROM loca_topo.edge
+UNION ALL
+SELECT 'node' AS name, count(*)
+  FROM loca_topo.node
+UNION ALL
+SELECT 'face' AS name, count(*)
+  FROM loca_topo.face;
+
+--VISUALIZACION GRAFICA DE TOPOLOGÍA
+
+SELECT locnombre, topogeom::geometry AS geom  FROM loca;
+
+--VISUALIZAR CONFLICTOS ENTRE QUE ELEMENTOS 1- NODOS, 2-EDGES, 3-CARAS
+
+SELECT te, array_agg(DISTINCT b.locnombre)
+ FROM loca AS b, topology.GetTopoGeomelements(topogeom) AS te
+ GROUP BY te
+ HAVING count(DISTINCT b.locnombre) > 1;
+  
+--ARREGLANDO ELEMENTOS
+
+WITH to_remove AS (
+	SELECT te, MAX( ST_Area(d.topogeom::geometry) ) AS max_area, array_agg(DISTINCT d.locnombre) AS shared_d
+  FROM loca AS d, topology.GetTopoGeomelements(d.topogeom) AS te, topology.ST_GetFaceGeometry('loca_topo',te[1]) AS t(geom)
+  GROUP BY te
+  HAVING count(DISTINCT d.locnombre) > 1)
+  UPDATE loca AS d SET topogeom = TopoGeom_remElement(topogeom, te)
+  FROM to_remove
+  WHERE d.locnombre = ANY(to_remove.shared_d) AND ST_Area(d.topogeom::geometry) = to_remove.max_area;
+
+
+--COMPROBACION VISUAL
+
+SELECT locnombre, topogeom::geometry AS geom  FROM loca;
+
+  
+--COMPROBACION TRASLAPES ENTRE LOCALIDADES
+
+SELECT te, array_agg(DISTINCT b.locnombre)
+ FROM loca AS b, topology.GetTopoGeomelements(topogeom) AS te
+ GROUP BY te
+ HAVING count(DISTINCT b.locnombre) > 1;
